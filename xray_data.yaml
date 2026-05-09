@@ -1,0 +1,10 @@
+names:
+- '0'
+- '1'
+- '2'
+- '3'
+- '4'
+nc: 5
+test: /Users/estefanialaverdebecerra/.cache/kagglehub/datasets/orvile/x-ray-baggage-anomaly-detection/versions/1/test_processed
+train: /Users/estefanialaverdebecerra/.cache/kagglehub/datasets/orvile/x-ray-baggage-anomaly-detection/versions/1/train_processed
+val: /Users/estefanialaverdebecerra/.cache/kagglehub/datasets/orvile/x-ray-baggage-anomaly-detection/versions/1/valid_processed
