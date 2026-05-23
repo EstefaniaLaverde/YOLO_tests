@@ -6,432 +6,884 @@ import random
 import torch
 import torch.nn.functional as F
 from PIL import Image
-from transformers import CLIPProcessor, CLIPModel
+from transformers import CLIPProcessor, CLIPModel, CLIPConfig
 from ultralytics import YOLO, RTDETR
 import kagglehub
+import torchvision.models as models
+import torchvision.transforms as T
 
-# ==============================================================================
-# PAGE CONFIGURATION & STYLES
-# ==============================================================================
-st.set_page_config(page_title="X-Ray Baggage Inspection App", layout="wide")
-st.title("🧳 X-Ray Baggage Inspection - Multi-Model Evaluation")
+# config page settings and custom CSS for a dark-themed security console aesthetic
+st.set_page_config(
+    page_title="X-Ray Security Console",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
-# ==============================================================================
-# PATHS & DATASET CONFIGURATION
-# ==============================================================================
-MODELS_DIR = "BEST_MODELS"  
-try:
-    base_kaggle_path = kagglehub.dataset_download("orvile/x-ray-baggage-anomaly-detection")
-    TEST_IMAGES_DIR = os.path.join(base_kaggle_path, "test_processed", "images")
-    TEST_LABELS_DIR = os.path.join(base_kaggle_path, "test_processed", "labels")
-except Exception as e:
-    st.error(f"Error connecting to Kagglehub: {e}")
-    TEST_IMAGES_DIR = None
-    TEST_LABELS_DIR = None
+# THIS WAS GENERATED WITH CLAUDE SONNET - I DONT KNOW CSS XD
+st.markdown("""
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Barlow+Condensed:wght@300;400;600;700&display=swap');
 
-# CORRECT Class Mapping (Alphabetical order: 0 is Scissors)
-CLASS_NAMES = {
-    0: "Scissors",
-    1: "Gun",
-    2: "Knife",
-    3: "Pliers",
-    4: "Wrench"
+/* ── Root tokens ──────────────────────────────────────────────────── */
+:root {
+    --bg:        #0a0c0f;
+    --bg-panel:  #111418;
+    --bg-card:   #161b22;
+    --border:    #1f2a35;
+    --accent:    #00ff88;
+    --accent-dim:#00aa55;
+    --warn:      #ffb800;
+    --danger:    #ff3b5c;
+    --text:      #c8d6e5;
+    --text-dim:  #5a7080;
+    --mono:      'Share Tech Mono', monospace;
+    --sans:      'Barlow Condensed', sans-serif;
 }
 
-# Box colors in BGR format for OpenCV
+/* ── Global reset ─────────────────────────────────────────────────── */
+html, body, .stApp { background: var(--bg) !important; color: var(--text) !important; }
+* { font-family: var(--sans) !important; letter-spacing: 0.02em; font-size: 16px; }
+
+/* ── Hide Streamlit chrome ────────────────────────────────────────── */
+#MainMenu, footer, header { visibility: hidden; }
+
+/* ── Sidebar ──────────────────────────────────────────────────────── */
+section[data-testid="stSidebar"] {
+    background: var(--bg-panel) !important;
+    border-right: 1px solid var(--border);
+}
+section[data-testid="stSidebar"] * { color: var(--text) !important; }
+
+/* ── Tabs ─────────────────────────────────────────────────────────── */
+.stTabs [data-baseweb="tab-list"] {
+    background: var(--bg-panel) !important;
+    border-bottom: 1px solid var(--border);
+    gap: 0;
+}
+.stTabs [data-baseweb="tab"] {
+    background: transparent !important;
+    color: var(--text-dim) !important;
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    padding: 12px 28px;
+    border-bottom: 2px solid transparent;
+}
+.stTabs [aria-selected="true"] {
+    color: var(--accent) !important;
+    border-bottom: 2px solid var(--accent) !important;
+    background: transparent !important;
+}
+.stTabs [data-baseweb="tab-panel"] {
+    background: var(--bg) !important;
+    padding-top: 20px;
+}
+
+/* ── Cards / panels ───────────────────────────────────────────────── */
+.scan-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 20px 24px;
+    margin-bottom: 16px;
+}
+.scan-card-accent { border-left: 3px solid var(--accent); }
+.scan-card-warn   { border-left: 3px solid var(--warn); }
+
+/* ── Section headers ──────────────────────────────────────────────── */
+.section-header {
+    font-family: var(--sans) !important;
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 8px;
+    margin-bottom: 16px;
+}
+
+/* ── App title ────────────────────────────────────────────────────── */
+.app-title {
+    font-family: var(--mono) !important;
+    font-size: 22px;
+    color: var(--accent);
+    letter-spacing: 0.08em;
+    margin-bottom: 2px;
+}
+.app-subtitle {
+    font-size: 11px;
+    font-weight: 400;
+    letter-spacing: 0.18em;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    margin-bottom: 0;
+}
+
+/* ── Pipeline badge ───────────────────────────────────────────────── */
+.badge {
+    display: inline-block;
+    padding: 3px 10px;
+    border-radius: 2px;
+    font-family: var(--mono) !important;
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+}
+.badge-p1  { background: #0d2035; color: #4db8ff; border: 1px solid #1a4a70; }
+.badge-p2  { background: #0d2010; color: var(--accent); border: 1px solid #1a5030; }
+.badge-none{ background: #201810; color: var(--warn); border: 1px solid #503010; }
+
+/* ── Metric chips ─────────────────────────────────────────────────── */
+.metric-row { display: flex; gap: 12px; flex-wrap: wrap; margin: 10px 0; }
+.metric-chip {
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 8px 14px;
+    text-align: center;
+    min-width: 90px;
+}
+.metric-chip .val {
+    font-family: var(--mono) !important;
+    font-size: 20px;
+    color: var(--accent);
+    display: block;
+}
+.metric-chip .lbl {
+    font-size: 10px;
+    letter-spacing: 0.14em;
+    color: var(--text-dim);
+    text-transform: uppercase;
+}
+
+/* ── Image frame ──────────────────────────────────────────────────── */
+.img-frame-label {
+    font-size: 13px;
+    letter-spacing: 0.18em;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    margin-bottom: 6px;
+    font-weight: 700;
+}
+
+/* ── Probability bar ──────────────────────────────────────────────── */
+.prob-row { margin: 8px 0; }
+.prob-label {
+    font-family: var(--mono) !important;
+    font-size: 15px;
+    color: var(--text);
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 4px;
+}
+.prob-bar-bg {
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    border-radius: 2px;
+    height: 8px;
+    overflow: hidden;
+}
+.prob-bar-fill {
+    height: 100%;
+    border-radius: 2px;
+    background: linear-gradient(90deg, var(--accent-dim), var(--accent));
+    transition: width 0.4s ease;
+}
+
+/* ── Buttons ──────────────────────────────────────────────────────── */
+.stButton > button {
+    background: transparent !important;
+    border: 1px solid var(--border) !important;
+    color: var(--text) !important;
+    border-radius: 3px;
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    transition: all 0.15s ease;
+}
+.stButton > button:hover {
+    border-color: var(--accent) !important;
+    color: var(--accent) !important;
+}
+
+/* ── Selectbox / inputs ───────────────────────────────────────────── */
+.stSelectbox > div > div,
+.stTextInput > div > div > input,
+.stTextArea > div > div > textarea {
+    background: var(--bg-panel) !important;
+    border: 1px solid var(--border) !important;
+    color: var(--text) !important;
+    border-radius: 3px !important;
+    font-family: var(--mono) !important;
+    font-size: 15px !important;
+}
+
+/* ── File uploader ────────────────────────────────────────────────── */
+.stFileUploader > div {
+    background: var(--bg-panel) !important;
+    border: 1px dashed var(--border) !important;
+    border-radius: 4px !important;
+}
+
+/* ── Caption / info ───────────────────────────────────────────────── */
+.stCaption { color: var(--text-dim) !important; font-size: 13px !important; }
+.stInfo    { background: #0d1a2e !important; border: 1px solid #1a3a60 !important; color: #80b4d4 !important; border-radius: 3px !important; }
+.stSuccess { background: #0d2018 !important; border: 1px solid #1a5030 !important; color: var(--accent) !important; border-radius: 3px !important; }
+.stWarning { background: #201a08 !important; border: 1px solid #50400a !important; color: var(--warn) !important; border-radius: 3px !important; }
+
+/* ── Radio ────────────────────────────────────────────────────────── */
+.stRadio label { font-size: 15px !important; color: var(--text) !important; }
+.stRadio [data-testid="stMarkdownContainer"] p { color: var(--text-dim) !important; font-size: 11px; }
+
+/* ── Scrollbar ────────────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 5px; }
+::-webkit-scrollbar-track { background: var(--bg); }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+</style>
+""", unsafe_allow_html=True)
+
+#  set some constants for model loading, class names, and colors
+MODELS_DIR = "BEST_MODELS"
+NUM_CLASSES = 5
+CLASS_NAMES = {0: "Scissors", 1: "Gun", 2: "Knife", 3: "Pliers", 4: "Wrench"}
 CLASS_COLORS = {
-    0: (0, 255, 0),     # Green -> Scissors
-    1: (0, 0, 255),     # Red -> Gun
-    2: (0, 165, 255),   # Orange -> Knife
-    3: (0, 255, 255),   # Yellow -> Pliers
-    4: (255, 0, 255)    # Magenta -> Wrench
+    0: (0, 255, 0), # green – Scissors
+    1: (0, 0, 255), # red – Gun
+    2: (0, 165, 255), # orange – Knife
+    3: (0, 255, 255), # yellow – Pliers
+    4: (255, 0, 255), # magenta – Wrench
 }
 
-# ==============================================================================
-# MODEL LOADING (CACHED)
-# ==============================================================================
-@st.cache_resource
-def load_detection_model(path):
-    """Dynamically loads RT-DETR or YOLO based on the file name pattern."""
-    file_name = os.path.basename(path).lower()
-    if "rtdetr" in file_name:
-        return RTDETR(path)
-    return YOLO(path)
+# map model filename to its corresponding preprocessing pipeline - inference images must be processed with the same pipeline used during training for best results.
+def infer_pipeline(model_filename: str) -> str:
+    """Return 'P1', 'P2', or 'None' based on naming convention."""
+    name = model_filename.lower()
+    if any(k in name for k in ["p1", "pipeline1", "clahe_gauss", "unsharp"]):
+        return "P1"
+    if any(k in name for k in ["p2", "pipeline2", "bilateral", "morph"]):
+        return "P2"
+    # baseline .pth files always use Pipeline 1
+    if name.endswith(".pth"):
+        return "P1"
+    return "P2"   # safe default for unlabeled pretrained .pt
 
+# prettier badge display for the UI :)
+PIPELINE_BADGE = {
+    "P1": '<span class="badge badge-p1">Pipeline 1 — Unsharp Mask</span>',
+    "P2": '<span class="badge badge-p2">Pipeline 2 — Bilateral + Gradient</span>',
+    "None": '<span class="badge badge-none">No preprocessing</span>',
+}
+
+# load dataset paths to cache to avoid repeated downloads
+@st.cache_resource
+def load_dataset_paths():
+    try:
+        base = kagglehub.dataset_download("orvile/x-ray-baggage-anomaly-detection")
+        return (
+            os.path.join(base, "test", "images"),
+            os.path.join(base, "test", "labels"),
+        )
+    except Exception as e:
+        st.error(f"Dataset load error: {e}")
+        return None, None
+
+TEST_IMG_DIR, TEST_LBL_DIR = load_dataset_paths()
+
+# load and cache the list of test images
+@st.cache_data
+def get_image_list():
+    if TEST_IMG_DIR and os.path.exists(TEST_IMG_DIR):
+        return sorted([
+            f for f in os.listdir(TEST_IMG_DIR)
+            if f.lower().endswith((".jpg", ".jpeg", ".png"))
+        ])
+    return []
+
+IMAGES = get_image_list()
+
+# preprocessing pipeline used in training
+def preprocess_p1(img: np.ndarray) -> np.ndarray:
+    """CLAHE + Unsharp Mask."""
+    lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
+    l, a, b = cv2.split(lab)
+    cl = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8)).apply(l)
+    img_clahe = cv2.cvtColor(cv2.merge((cl, a, b)), cv2.COLOR_LAB2BGR)
+    blur = cv2.GaussianBlur(img_clahe, (9, 9), 10.0)
+    return cv2.addWeighted(img_clahe, 1.5, blur, -0.5, 0)
+
+def preprocess_p2(img: np.ndarray) -> np.ndarray:
+    """CLAHE + Bilateral Filter + Morphological Gradient."""
+    lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
+    l, a, b = cv2.split(lab)
+    cl = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8)).apply(l)
+    img_clahe = cv2.cvtColor(cv2.merge((cl, a, b)), cv2.COLOR_LAB2BGR)
+    filtered  = cv2.bilateralFilter(img_clahe, 9, 75, 75)
+    kernel    = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+    gradient  = cv2.morphologyEx(filtered, cv2.MORPH_GRADIENT, kernel)
+    return cv2.addWeighted(filtered, 0.9, gradient, 0.1, 0)
+
+def apply_pipeline(img: np.ndarray, pipeline: str) -> np.ndarray:
+    if pipeline == "P1":
+        return preprocess_p1(img)
+    if pipeline == "P2":
+        return preprocess_p2(img)
+    return img
+
+# load and cache models to avoid repeated disk I/O and GPU warmup
+@st.cache_resource
+def load_pretrained_model(path: str):
+    name = os.path.basename(path).lower()
+    return RTDETR(path) if "rtdetr" in name else YOLO(path)
+
+# the baseline model is a custom ResNet. We need to reconstruct the architecture in code to load the .pth checkpoint properly.
+@st.cache_resource
+def load_baseline_model(path: str):
+    """Load the custom ResNet-18 baseline saved as .pth.
+
+    Architecture reconstructed from the actual checkpoint keys:
+      backbone - ResNet-18 conv layers (Sequential)
+      spatial_reduction - Sequential(Conv2d, BN, ReLU, AdaptiveAvgPool)
+      classifier - Sequential(Flatten, Linear, ReLU, Linear)
+      box_regressor - Sequential(Flatten, Linear, ReLU, Linear, Sigmoid)
+    """
+    import torch.nn as nn
+
+    class BaselineDetector(nn.Module):
+        def __init__(self, nc=6):
+            super().__init__()
+            # set backbone 
+            base = models.resnet18(weights=None)
+            self.backbone = nn.Sequential(*list(base.children())[:-2])
+
+            # spacial reduction of feature maps to a fixed size for the classifier and regressor heads
+            self.spatial_reduction = nn.Sequential(
+                nn.Conv2d(512, 128, kernel_size=3, padding=1),
+                nn.BatchNorm2d(128),
+                nn.ReLU(inplace=True),
+                nn.AdaptiveAvgPool2d((4, 4)),
+            )
+
+            feat_dim = 128 * 4 * 4
+
+            # classification head - outputs class logits (including background class 0)
+            self.classifier = nn.Sequential(
+                nn.Linear(feat_dim, 256),
+                nn.ReLU(inplace=True),
+                nn.Dropout(0.3),
+                nn.Linear(256, nc),
+            )
+
+            # regression head - outputs normalized box coordinates (xc, yc, bw, bh) in [0, 1] relative to input image size
+            self.box_regressor = nn.Sequential(
+                nn.Linear(feat_dim, 256),
+                nn.ReLU(inplace=True),
+                nn.Dropout(0.3),
+                nn.Linear(256, 4),
+                nn.Sigmoid(),
+            )
+
+        def forward(self, x):
+            # apply reduction to the backbone features before feeding into the heads
+            f = self.spatial_reduction(self.backbone(x))
+
+            # flatten the feature maps to a vector for the fully connected layers
+            f = f.flatten(1)
+
+            # return both class logits and box coordinates
+            return self.classifier(f), self.box_regressor(f)
+
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    model  = BaselineDetector(nc=NUM_CLASSES + 1)
+    ckpt   = torch.load(path, map_location=device, weights_only=False)
+    state  = ckpt.get("model_state_dict", ckpt)
+    model.load_state_dict(state)
+    model.eval()
+    return model.to(device)
+
+# load CLIP for zero-shot classification of detected objects
 @st.cache_resource
 def load_clip_model():
-    """Loads and caches OpenAI's CLIP model with global attention tracking enabled."""
-    from transformers import CLIPConfig
     config = CLIPConfig.from_pretrained("openai/clip-vit-base-patch32")
     config.vision_config.output_attentions = True
-    
     model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32", config=config)
     processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
     return model, processor
 
-# ==============================================================================
-# PREPROCESSING PIPELINES
-# ==============================================================================
-def preprocess_pipeline_1(img):
-    lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
-    l, a, b = cv2.split(lab)
-    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
-    cl = clahe.apply(l)
-    limg = cv2.merge((cl, a, b))
-    img_clahe = cv2.cvtColor(limg, cv2.COLOR_LAB2BGR)
-    
-    gaussian_blur = cv2.GaussianBlur(img_clahe, (9, 9), 10.0)
-    img_sharp = cv2.addWeighted(img_clahe, 1.5, gaussian_blur, -0.5, 0)
-    return img_sharp
-
-def preprocess_pipeline_2(img):
-    lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
-    l, a, b = cv2.split(lab)
-    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
-    cl = clahe.apply(l)
-    limg = cv2.merge((cl, a, b))
-    img_clahe = cv2.cvtColor(limg, cv2.COLOR_LAB2BGR)
-
-    filtered = cv2.bilateralFilter(img_clahe, d=9, sigmaColor=75, sigmaSpace=75)
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
-    gradient = cv2.morphologyEx(filtered, cv2.MORPH_GRADIENT, kernel)
-    
-    img_final = cv2.addWeighted(filtered, 0.9, gradient, 0.1, 0)
-    return img_final
-
-# ==============================================================================
-# DRAWING & INFERENCE FUNCTIONS
-# ==============================================================================
-def draw_ground_truth(img_path, label_path):
-    img = cv2.imread(img_path)
-    if img is None:
-        return None
-    h, w, _ = img.shape
-    
-    if os.path.exists(label_path):
-        with open(label_path, 'r') as f:
-            lines = f.readlines()
-        for line in lines:
-            parts = line.strip().split()
-            if len(parts) == 5:
-                cls_id = int(parts[0])
-                x_c, y_c, bbox_w, bbox_h = map(float, parts[1:])
-                x1 = int((x_c - bbox_w / 2) * w)
-                y1 = int((y_c - bbox_h / 2) * h)
-                x2 = int((x_c + bbox_w / 2) * w)
-                y2 = int((y_c + bbox_h / 2) * h)
-                
-                color = CLASS_COLORS.get(cls_id, (255, 255, 255))
-                label_text = CLASS_NAMES.get(cls_id, f"Class {cls_id}")
-                
-                cv2.rectangle(img, (x1, y1), (x2, y2), color, 2)
-                cv2.putText(img, label_text, (x1, max(y1 - 5, 15)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
-    return cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-
-def draw_predictions(processed_img, model_instance):
-    img_canvas = processed_img.copy()
-    results = model_instance.predict(img_canvas, verbose=False)[0]
-    
+# some inference helper functions to run the models and draw boxes on the images
+def predict_pretrained(model, img_bgr: np.ndarray):
+    """Run YOLO / RT-DETR on a preprocessed BGR image. Returns annotated RGB."""
+    canvas  = img_bgr.copy()
+    results = model.predict(canvas, verbose=False)[0]
     if results.boxes is not None:
         for box in results.boxes:
-            coords = box.xyxy[0].tolist()
-            x1, y1, x2, y2 = map(int, coords)
+            x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
             cls_id = int(box.cls[0].item())
-            conf = box.conf[0].item()
-            
-            color = CLASS_COLORS.get(cls_id, (255, 255, 255))
-            label_text = f"{CLASS_NAMES.get(cls_id, f'Class {cls_id}')} {conf:.2f}"
-            
-            cv2.rectangle(img_canvas, (x1, y1), (x2, y2), color, 2)
-            cv2.putText(img_canvas, label_text, (x1, max(y1 - 5, 15)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
-            
-    return cv2.cvtColor(img_canvas, cv2.COLOR_BGR2RGB)
+            conf = float(box.conf[0].item())
+            color = CLASS_COLORS.get(cls_id, (200, 200, 200))
+            label= f"{CLASS_NAMES.get(cls_id, str(cls_id))}  {conf:.2f}"
+            cv2.rectangle(canvas, (x1, y1), (x2, y2), color, 2)
+            cv2.putText(canvas, label, (x1, max(y1 - 6, 14)), cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 2)
+    return cv2.cvtColor(canvas, cv2.COLOR_BGR2RGB)
 
-def analyze_with_clip(opencv_image, candidate_labels):
-    model, processor = load_clip_model()
-    rgb_image = cv2.cvtColor(opencv_image, cv2.COLOR_BGR2RGB)
-    pil_image = Image.fromarray(rgb_image)
-    
-    inputs = processor(text=candidate_labels, images=pil_image, return_tensors="pt", padding=True)
+# predict with the custom baseline model - since it outputs a single box and class per image, we just draw that one box if the predicted class is not background (0)
+def predict_baseline(model, img_bgr: np.ndarray):
+    """Run the custom baseline model. Returns annotated RGB."""
+    device = next(model.parameters()).device
+    transform = T.Compose([
+        T.Resize((416, 416)),
+        T.ToTensor(),
+        T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
+    ])
+    pil   = Image.fromarray(cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB))
+    inp   = transform(pil).unsqueeze(0).to(device)
+
     with torch.no_grad():
-        outputs = model(**inputs)
-        
-    logits_per_image = outputs.logits_per_image 
-    probs = logits_per_image.softmax(dim=-1).cpu().numpy()[0]
-    
-    results = {label: float(prob) for label, prob in zip(candidate_labels, probs)}
-    return dict(sorted(results.items(), key=lambda item: item[1], reverse=True))
+        logits, boxes = model(inp)
 
-def generate_clip_heatmap(opencv_image):
+    cls_id = int(logits.argmax(dim=1).item())
+    conf   = float(F.softmax(logits, dim=1).max().item())
+    canvas = cv2.resize(img_bgr, (416, 416)).copy()
+    h, w   = canvas.shape[:2]
+
+    # class 0 = background; skip drawing if background predicted
+    if cls_id > 0:
+        xc, yc, bw, bh = boxes[0].tolist()
+        x1 = int((xc - bw / 2) * w)
+        y1 = int((yc - bh / 2) * h)
+        x2 = int((xc + bw / 2) * w)
+        y2 = int((yc + bh / 2) * h)
+        color = CLASS_COLORS.get(cls_id - 1, (200, 200, 200))
+        label = f"{CLASS_NAMES.get(cls_id - 1, str(cls_id))}  {conf:.2f}"
+        cv2.rectangle(canvas, (x1, y1), (x2, y2), color, 2)
+        cv2.putText(canvas, label, (x1, max(y1 - 6, 14)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 2)
+    return cv2.cvtColor(canvas, cv2.COLOR_BGR2RGB), cls_id, conf
+
+def draw_ground_truth(img_path: str, lbl_path: str) -> np.ndarray:
+    """Draw GT boxes on image. Returns RGB."""
+    img = cv2.imread(img_path)
+    h, w, _ = img.shape
+    if os.path.exists(lbl_path):
+        for line in open(lbl_path).readlines():
+            parts = line.strip().split()
+            if len(parts) != 5:
+                continue
+            cls_id = int(parts[0])
+            xc, yc, bw, bh = map(float, parts[1:])
+            x1 = int((xc - bw / 2) * w); y1 = int((yc - bh / 2) * h)
+            x2 = int((xc + bw / 2) * w); y2 = int((yc + bh / 2) * h)
+            color = CLASS_COLORS.get(cls_id, (200, 200, 200))
+            cv2.rectangle(img, (x1, y1), (x2, y2), color, 2)
+            cv2.putText(img, CLASS_NAMES.get(cls_id, str(cls_id)),
+                        (x1, max(y1 - 6, 14)),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 2)
+    return cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+
+def clip_classify(opencv_img: np.ndarray, labels: list[str]) -> dict:
     model, processor = load_clip_model()
-    h, w, _ = opencv_image.shape
-    
-    rgb_image = cv2.cvtColor(opencv_image, cv2.COLOR_BGR2RGB)
-    pil_image = Image.fromarray(rgb_image)
-    inputs = processor(images=pil_image, return_tensors="pt")
-    
+    pil = Image.fromarray(cv2.cvtColor(opencv_img, cv2.COLOR_BGR2RGB))
+    inputs = processor(text=labels, images=pil, return_tensors="pt", padding=True)
     with torch.no_grad():
-        vision_outputs = model.vision_model(**inputs)
-    
-    attentions = vision_outputs.attentions[-1] 
-    avg_attention = attentions.mean(dim=1)[0]
-    cls_attention = avg_attention[0, 1:] 
-    
-    grid_size = int(np.sqrt(cls_attention.shape[0]))
-    heatmap_grid = cls_attention.reshape(grid_size, grid_size).cpu().numpy()
-    
-    heatmap_normalized = (heatmap_grid - heatmap_grid.min()) / (heatmap_grid.max() - heatmap_grid.min() + 1e-8)
-    heatmap_resized = cv2.resize(heatmap_normalized, (w, h))
-    heatmap_uint8 = np.uint8(255 * heatmap_resized)
-    
-    color_heatmap = cv2.applyColorMap(heatmap_uint8, cv2.COLORMAP_JET)
-    overlay_output = cv2.addWeighted(opencv_image, 0.6, color_heatmap, 0.4, 0)
-    return cv2.cvtColor(overlay_output, cv2.COLOR_BGR2RGB)
+        out = model(**inputs)
+    probs = out.logits_per_image.softmax(dim=-1).cpu().numpy()[0]
+    return dict(sorted(zip(labels, probs.tolist()), key=lambda x: x[1], reverse=True))
 
-# ==============================================================================
-# GLOBAL NAVIGATION COMPONENT STATE (SYNCHRONIZED)
-# ==============================================================================
-if os.path.exists(TEST_IMAGES_DIR):
-    available_images = sorted([f for f in os.listdir(TEST_IMAGES_DIR) if f.lower().endswith(('.png', '.jpg', '.jpeg'))])
-else:
-    available_images = []
+def clip_heatmap(opencv_img: np.ndarray) -> np.ndarray:
+    model, processor = load_clip_model()
+    h, w, _ = opencv_img.shape
+    pil = Image.fromarray(cv2.cvtColor(opencv_img, cv2.COLOR_BGR2RGB))
+    inputs = processor(images=pil, return_tensors="pt")
+    with torch.no_grad():
+        vis_out = model.vision_model(**inputs)
+    attn = vis_out.attentions[-1].mean(dim=1)[0]
+    cls_attn = attn[0, 1:]
+    grid = int(np.sqrt(cls_attn.shape[0]))
+    hmap = cls_attn.reshape(grid, grid).cpu().numpy()
+    hmap = (hmap - hmap.min()) / (hmap.max() - hmap.min() + 1e-8)
+    hmap = np.uint8(255 * cv2.resize(hmap, (w, h)))
+    overlay = cv2.addWeighted(opencv_img, 0.55,
+                              cv2.applyColorMap(hmap, cv2.COLORMAP_JET), 0.45, 0)
+    return cv2.cvtColor(overlay, cv2.COLOR_BGR2RGB)
 
-# Persistent Initialization
-if "img_index" not in st.session_state:
-    st.session_state.img_index = 0
-if "current_heatmap" not in st.session_state:
-    st.session_state.current_heatmap = None
-if "clip_fixed_results" not in st.session_state:
-    st.session_state.clip_fixed_results = None
-if "clip_free_results" not in st.session_state:
-    st.session_state.clip_free_results = None
+# some iu helper functions to render probability bars and other UI elements in the Streamlit app (again i dont know css)
+def prob_bars_html(results: dict) -> str:
+    rows = ""
+    for label, score in results.items():
+        pct   = score * 100
+        width = f"{pct:.1f}%"
+        color = "var(--accent)" if pct == max(v * 100 for v in results.values()) else "var(--accent-dim)"
+        rows += f"""
+        <div class="prob-row">
+          <div class="prob-label">
+            <span>{label}</span>
+            <span style="font-family:var(--mono);color:{color}">{pct:.1f}%</span>
+          </div>
+          <div class="prob-bar-bg">
+            <div class="prob-bar-fill" style="width:{width};background:{color}"></div>
+          </div>
+        </div>"""
+    return rows
 
-def clear_cached_inferences():
-    """Wipes computed assets whenever the active target image is altered."""
-    st.session_state.current_heatmap = None
-    st.session_state.clip_fixed_results = None
-    st.session_state.clip_free_results = None
+# image index to always show the same image across all tabs - it makes it easier to compare model outputs
+_GLOBAL_IDX = "global_img_idx"
 
-# Component Sync Actions
-def handle_prev():
-    if st.session_state.img_index > 0:
-        st.session_state.img_index -= 1
-        clear_cached_inferences()
+def _nav_prev(_k=_GLOBAL_IDX):
+    st.session_state[_k] = max(0, st.session_state[_k] - 1)
 
-def handle_next():
-    if st.session_state.img_index < len(available_images) - 1:
-        st.session_state.img_index += 1
-        clear_cached_inferences()
+def _nav_next(_k=_GLOBAL_IDX):
+    st.session_state[_k] = min(len(IMAGES) - 1, st.session_state[_k] + 1)
 
-def handle_random():
-    if len(available_images) > 1:
-        st.session_state.img_index = random.randint(0, len(available_images) - 1)
-        clear_cached_inferences()
+def _nav_rand(_k=_GLOBAL_IDX):
+    st.session_state[_k] = random.randint(0, len(IMAGES) - 1)
 
-def handle_selectbox_change(key):
-    """Callback linked to selectbox interactions."""
-    selected_value = st.session_state[key]
-    new_index = available_images.index(selected_value)
-    if new_index != st.session_state.img_index:
-        st.session_state.img_index = new_index
-        clear_cached_inferences()
+def _nav_sync_sb(sb_key, _k=_GLOBAL_IDX):
+    st.session_state[_k] = IMAGES.index(st.session_state[sb_key])
 
-def render_navigation_block(key_suffix):
-    c1, c2, c3 = st.columns([1, 1, 2])
+def render_image_navigator(key: str):
+    """Navigation bar that reads/writes the single global image index.
+
+    All three tabs share _GLOBAL_IDX so switching tabs always shows the same
+    image. The `key` argument is used only to give Streamlit unique widget IDs.
+    """
+    if not IMAGES:
+        st.warning("No test images found.")
+        return None
+
+    if _GLOBAL_IDX not in st.session_state:
+        st.session_state[_GLOBAL_IDX] = 0
+
+    sb_key = f"sb_{key}"
+
+    c1, c2, c3 = st.columns([1, 1, 1])
     with c1:
-        st.button("⬅️ Previous", key=f"btn_prev_{key_suffix}", on_click=handle_prev, use_container_width=True)
+        st.button("◀  Prev",   key=f"prev_{key}", on_click=_nav_prev, use_container_width=True)
     with c2:
-        st.button("Next ➡️", key=f"btn_next_{key_suffix}", on_click=handle_next, use_container_width=True)
+        st.button("Next  ▶",   key=f"next_{key}", on_click=_nav_next, use_container_width=True)
     with c3:
-        st.button("🎲 Random Image", key=f"btn_rand_{key_suffix}", on_click=handle_random, use_container_width=True)
-    
-    # Ensure selectbox stays locked onto the uniform index state
+        st.button("⊞  Random", key=f"rand_{key}", on_click=_nav_rand, use_container_width=True)
+
     st.selectbox(
-        "Select Image from Test Dataset:", 
-        available_images, 
-        index=st.session_state.img_index, 
-        key=f"sb_select_{key_suffix}",
-        on_change=handle_selectbox_change,
-        args=(f"sb_select_{key_suffix}",)
+        "Select image",
+        IMAGES,
+        index=st.session_state[_GLOBAL_IDX],
+        key=sb_key,
+        on_change=_nav_sync_sb,
+        kwargs={"sb_key": sb_key},
+        label_visibility="collapsed",
     )
-    st.caption(f"Showing Image {st.session_state.img_index + 1} of {len(available_images)}")
+    st.caption(f"Image {st.session_state[_GLOBAL_IDX] + 1} / {len(IMAGES)}")
+    return IMAGES[st.session_state[_GLOBAL_IDX]]
 
-# ==============================================================================
-# APP TABS SYSTEM (NAVIGATION)
-# ==============================================================================
-tab_yolo, tab_clip = st.tabs(["🔍 Object Detection (YOLO / RT-DETR)", "🔮 CLIP Laboratory (Zero-Shot)"])
+def render_upload_toggle(key: str):
+    """Radio to choose between test dataset or uploaded file."""
+    return st.radio(
+        "Image source",
+        ["📂  Test dataset", "⬆  Upload image"],
+        horizontal=True,
+        key=f"src_{key}",
+        label_visibility="collapsed",
+    )
 
-# ==============================================================================
-# TAB 1: OBJECT DETECTION
-# ==============================================================================
-with tab_yolo:
-    st.header("Bounding Boxes Analysis")
-    st.markdown("Evaluate trained models along with their optimal pre-processing pipeline criteria.")
+def load_image_from_upload(key: str):
+    """File uploader → BGR numpy. Returns None if nothing uploaded."""
+    f = st.file_uploader("Drop an image here", type=["jpg", "jpeg", "png"], key=f"up_{key}")
+    if f:
+        arr = np.frombuffer(f.read(), np.uint8)
+        return cv2.imdecode(arr, cv2.IMREAD_COLOR)
+    return None
 
-    with st.sidebar:
-        st.subheader("🤖 YOLO Configuration")
-        if os.path.exists(MODELS_DIR) and available_images:
-            available_models = [f for f in os.listdir(MODELS_DIR) if f.lower().endswith('.pt')]
-            if available_models:
-                selected_model_name = st.selectbox("Select Model Architecture:", sorted(available_models), key="yolo_model_select")
-                model_full_path = os.path.join(MODELS_DIR, selected_model_name)
-                model = load_detection_model(model_full_path)
-            else:
-                st.error("No checkpoint files (.pt) found.")
-                st.stop()
-        
-            if "clahe_gaussianblur" in selected_model_name.lower():
-                pipeline_selected = "Pipeline 1"
-                st.success("Automatically linked: **Pipeline 1**")
-            else:
-                pipeline_selected = "Pipeline 2"
-                st.info("Automatically linked: **Pipeline 2**")
+# set sidebar content with app title, system status indicators, and threat class legend
+with st.sidebar:
+    st.markdown("""
+    <div class="app-title">XRAY-SEC</div>
+    <div class="app-subtitle">Baggage Inspection Console v1.0</div>
+    <hr style="border-color:#1f2a35;margin:16px 0">
+    """, unsafe_allow_html=True)
+
+    st.markdown('<p class="section-header">System Status</p>', unsafe_allow_html=True)
+    dataset_ok = TEST_IMG_DIR is not None and os.path.exists(TEST_IMG_DIR)
+    models_ok  = os.path.exists(MODELS_DIR) and len(os.listdir(MODELS_DIR)) > 0
+    st.markdown(f"""
+    <div class="scan-card" style="padding:12px 16px">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+        <span style="color:{'#00ff88' if dataset_ok else '#ff3b5c'}">{'●' if dataset_ok else '○'}</span>
+        <span style="font-size:15px">Dataset {'linked' if dataset_ok else 'not found'}</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <span style="color:{'#00ff88' if models_ok else '#ff3b5c'}">{'●' if models_ok else '○'}</span>
+        <span style="font-size:15px">Models dir {'ready' if models_ok else 'missing'}</span>
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    st.markdown('<p class="section-header" style="margin-top:20px">Threat Classes</p>',
+                unsafe_allow_html=True)
+    color_hex = {0:"#00ff00", 1:"#ff3b5c", 2:"#ff8c00", 3:"#ffff00", 4:"#ff00ff"}
+    for cid, name in CLASS_NAMES.items():
+        st.markdown(
+            f'<div style="display:flex;align-items:center;gap:8px;margin:5px 0">'
+            f'<span style="width:10px;height:10px;border-radius:50%;background:{color_hex[cid]};display:inline-block"></span>'
+            f'<span style="font-family:var(--mono);font-size:15px">{name}</span></div>',
+            unsafe_allow_html=True,
+        )
+
+# tabs
+tab_pre, tab_base, tab_clip = st.tabs([
+    "  PRETRAINED MODELS  ",
+    "  BASELINE CNN  ",
+    "  CLIP ZERO-SHOT  ",
+])
+
+# tab 1 design - pretrained YOLO / RT-DETR models with selectable preprocessing pipelines
+with tab_pre:
+    st.markdown('<p class="section-header">Pretrained Detector — YOLO / RT-DETR</p>',
+                unsafe_allow_html=True)
+
+    # Model selector
+    pt_files = []
+    if os.path.exists(MODELS_DIR):
+        pt_files = sorted([f for f in os.listdir(MODELS_DIR) if f.lower().endswith(".pt")])
+
+    if not pt_files:
+        st.warning("No `.pt` model files found in BEST_MODELS/")
+        st.stop()
+
+    sel_model = st.selectbox("Model checkpoint", pt_files, key="pre_model")
+    pipeline  = infer_pipeline(sel_model)
+    st.markdown(PIPELINE_BADGE[pipeline], unsafe_allow_html=True)
+
+    model_pre = load_pretrained_model(os.path.join(MODELS_DIR, sel_model))
+
+    st.markdown("---")
+
+    # Source toggle
+    src = render_upload_toggle("pre")
+    uploaded_pre = None
+
+    if "⬆" in src:
+        uploaded_pre = load_image_from_upload("pre")
+        if uploaded_pre is not None:
+            proc = apply_pipeline(uploaded_pre, pipeline)
+            pred = predict_pretrained(model_pre, proc)
+            st.markdown('<p class="img-frame-label">Model Prediction</p>',
+                        unsafe_allow_html=True)
+            st.image(pred, use_container_width=True)
+        else:
+            st.info("Upload an image to run inference.")
+    else:
+        sel_img = render_image_navigator("pre")
+        if sel_img:
+            img_path = os.path.join(TEST_IMG_DIR, sel_img)
+            lbl_path = os.path.join(TEST_LBL_DIR,
+                                    os.path.splitext(sel_img)[0] + ".txt")
+            img_bgr  = cv2.imread(img_path)
+            proc     = apply_pipeline(img_bgr, pipeline)
+
+            col_gt, col_pred = st.columns(2, gap="medium")
+            with col_gt:
+                st.markdown('<p class="img-frame-label">Ground Truth</p>',
+                            unsafe_allow_html=True)
+                st.image(draw_ground_truth(img_path, lbl_path),
+                         use_container_width=True)
+            with col_pred:
+                st.markdown('<p class="img-frame-label">Model Prediction</p>',
+                            unsafe_allow_html=True)
+                st.image(predict_pretrained(model_pre, proc),
+                         use_container_width=True)
+
+# tab 2 design - baseline 
+with tab_base:
+    st.markdown('<p class="section-header">Baseline Detector — ResNet-18 CNN</p>',
+                unsafe_allow_html=True)
+
+    pth_files = []
+    if os.path.exists(MODELS_DIR):
+        pth_files = sorted([f for f in os.listdir(MODELS_DIR) if f.lower().endswith(".pth")])
+
+    if not pth_files:
+        st.warning("No `.pth` model files found in BEST_MODELS/")
+    else:
+        sel_base = st.selectbox("Baseline checkpoint", pth_files, key="base_model")
+        st.markdown(PIPELINE_BADGE['P1'], unsafe_allow_html=True)
+
+        model_base = load_baseline_model(os.path.join(MODELS_DIR, sel_base))
+
+        st.markdown('<div class="scan-card scan-card-accent" style="font-size:12px;color:#5a7080">'
+                    'Baseline model. Images are preprocessed with Pipeline 1 (CLAHE + Unsharp Mask) '
+                    'before inference. ResNet-18 backbone with classification and box regression heads.</div>',
+                    unsafe_allow_html=True)
         st.markdown("---")
 
-    st.subheader("📁 Image Selection for Detection")
-    render_navigation_block("yolo")
-    
-    uploaded_file_yolo = st.file_uploader("Or upload an external image for YOLO inference:", type=["jpg", "jpeg", "png"], key="file_yolo")
+        src_b = render_upload_toggle("base")
 
-    if uploaded_file_yolo is not None:
-        file_bytes = np.asarray(bytearray(uploaded_file_yolo.read()), dtype=np.uint8)
-        img_raw = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
-        st.info("ℹ️ External image loaded (Ground Truth layout bypassed).")
-        
-        processed = preprocess_pipeline_1(img_raw) if pipeline_selected == "Pipeline 1" else preprocess_pipeline_2(img_raw)
-        pred_img = draw_predictions(processed, model)
-        st.image(pred_img, use_container_width=True, caption="Model Preds Viewport")
-    else:
-        if available_images:
-            path_img = os.path.join(TEST_IMAGES_DIR, available_images[st.session_state.img_index])
-            path_lbl = os.path.join(TEST_LABELS_DIR, f"{os.path.splitext(available_images[st.session_state.img_index])[0]}.txt")
-            
-            img_raw = cv2.imread(path_img)
-            gt_img = draw_ground_truth(path_img, path_lbl)
-            processed = preprocess_pipeline_1(img_raw) if pipeline_selected == "Pipeline 1" else preprocess_pipeline_2(img_raw)
-            pred_img = draw_predictions(processed, model)
-            
-            col_gt, col_pred = st.columns(2)
-            with col_gt:
-                st.markdown("#### Ground Truth Labels")
-                st.image(gt_img, use_container_width=True)
-            with col_pred:
-                st.markdown("#### Model Predictions")
-                st.image(pred_img, use_container_width=True)
-
-# ==============================================================================
-# TAB 2: INTERACTIVE CLIP LABORATORY WITH GLOBAL VISUAL ATTENTION HEATMAP
-# ==============================================================================
-with tab_clip:
-    st.header("🔮 CLIP Laboratory (Zero-Shot Classification)")
-    st.markdown("Test open-vocabulary natural language concepts to evaluate CLIP's vision-text mapping features.")
-
-    origen_imagen = st.radio("Image Source for CLIP Input:", ["Use Image selected from Test Dataset", "Upload a new external file"], horizontal=True, key="origen_clip", on_change=clear_cached_inferences)
-
-    opencv_img_clip = None
-    if origen_imagen == "Upload a new external file":
-        uploaded_file_clip = st.file_uploader("Upload an image file for CLIP:", type=["jpg", "jpeg", "png"], key="file_clip")
-        if uploaded_file_clip is not None:
-            file_bytes = np.asarray(bytearray(uploaded_file_clip.read()), dtype=np.uint8)
-            opencv_img_clip = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
-    else:
-        st.subheader("📁 Image Selection for CLIP")
-        render_navigation_block("clip")
-        if available_images:
-            path_img_clip = os.path.join(TEST_IMAGES_DIR, available_images[st.session_state.img_index])
-            opencv_img_clip = cv2.imread(path_img_clip)
-
-    if opencv_img_clip is not None:
-        col_visualizer, col_modules = st.columns([1, 1.2])
-        
-        with col_visualizer:
-            st.markdown("#### Target Input View")
-            st.image(cv2.cvtColor(opencv_img_clip, cv2.COLOR_BGR2RGB), use_container_width=True)
-            
-            st.markdown("---")
-            st.markdown("#### 🧠 CLIP Explainable AI (Transformer Attention Map)")
-            
-            if st.button("🗺️ Generate Attention Heatmap", use_container_width=True):
-                with st.spinner("Extracting multi-head self-attention token weights..."):
-                    st.session_state.current_heatmap = generate_clip_heatmap(opencv_img_clip)
-            
-            if st.session_state.current_heatmap is not None:
-                st.image(st.session_state.current_heatmap, use_container_width=True, caption="Warm colors (Red/Yellow) highlight where CLIP is focusing.")
+        if "⬆" in src_b:
+            uploaded_base = load_image_from_upload("base")
+            if uploaded_base is not None:
+                uploaded_base_proc = preprocess_p1(uploaded_base)
+                pred_rgb, cls_id, conf = predict_baseline(model_base, uploaded_base_proc)
+                st.markdown('<p class="img-frame-label">Model Prediction</p>',
+                            unsafe_allow_html=True)
+                st.image(pred_rgb, use_container_width=True)
+                cls_name = CLASS_NAMES.get(cls_id - 1, "Background") if cls_id > 0 else "Background"
+                st.markdown(f"""
+                <div class="metric-row">
+                  <div class="metric-chip">
+                    <span class="val">{cls_name}</span>
+                    <span class="lbl">Predicted Class</span>
+                  </div>
+                  <div class="metric-chip">
+                    <span class="val">{conf*100:.1f}%</span>
+                    <span class="lbl">Confidence</span>
+                  </div>
+                </div>""", unsafe_allow_html=True)
             else:
-                st.caption("Click the button above to visually project CLIP's neural focus grid mapping.")
-            
-        with col_modules:
-            modulo_seleccionado = st.radio(
-                "Select CLIP Evaluation Modality:",
-                ["📊 1. Automatic Dataset Class Identification", "💬 2. Custom Free-Form Prompting Query"]
+                st.info("Upload an image to run inference.")
+        else:
+            sel_img_b = render_image_navigator("base")
+            if sel_img_b:
+                img_path_b = os.path.join(TEST_IMG_DIR, sel_img_b)
+                lbl_path_b = os.path.join(TEST_LBL_DIR,
+                                          os.path.splitext(sel_img_b)[0] + ".txt")
+                img_bgr_b  = cv2.imread(img_path_b)
+                img_bgr_b_proc = preprocess_p1(img_bgr_b)
+
+                pred_rgb, cls_id, conf = predict_baseline(model_base, img_bgr_b_proc)
+                col_gt_b, col_pred_b = st.columns(2, gap="medium")
+                with col_gt_b:
+                    st.markdown('<p class="img-frame-label">Ground Truth</p>',
+                                unsafe_allow_html=True)
+                    st.image(draw_ground_truth(img_path_b, lbl_path_b),
+                             use_container_width=True)
+                with col_pred_b:
+                    st.markdown('<p class="img-frame-label">Model Prediction</p>',
+                                unsafe_allow_html=True)
+                    st.image(pred_rgb, use_container_width=True)
+                    cls_name = CLASS_NAMES.get(cls_id - 1, "Background") if cls_id > 0 else "Background"
+                    st.markdown(f"""
+                    <div class="metric-row" style="margin-top:10px">
+                      <div class="metric-chip">
+                        <span class="val">{cls_name}</span>
+                        <span class="lbl">Predicted Class</span>
+                      </div>
+                      <div class="metric-chip">
+                        <span class="val">{conf*100:.1f}%</span>
+                        <span class="lbl">Confidence</span>
+                      </div>
+                    </div>""", unsafe_allow_html=True)
+
+# tab 3 design - CLIP zero-shot classification with attention heatmap visualization
+with tab_clip:
+    st.markdown('<p class="section-header">CLIP — Zero-Shot Classification & Attention</p>',
+                unsafe_allow_html=True)
+
+    src_c = render_upload_toggle("clip")
+    opencv_clip = None
+
+    if "⬆" in src_c:
+        opencv_clip = load_image_from_upload("clip")
+        if opencv_clip is None:
+            st.info("Upload an image to activate CLIP modules.")
+    else:
+        sel_img_c = render_image_navigator("clip")
+        if sel_img_c:
+            opencv_clip = cv2.imread(os.path.join(TEST_IMG_DIR, sel_img_c))
+
+    if opencv_clip is not None:
+        st.markdown("---")
+        col_img_c, col_mods = st.columns([1, 1.3], gap="large")
+
+        with col_img_c:
+            st.markdown('<p class="img-frame-label">Input Image</p>',
+                        unsafe_allow_html=True)
+            st.image(cv2.cvtColor(opencv_clip, cv2.COLOR_BGR2RGB),
+                     use_container_width=True)
+
+            st.markdown('<p class="section-header" style="margin-top:18px">Attention Heatmap</p>',
+                        unsafe_allow_html=True)
+            if st.button("Generate heatmap", key="gen_heatmap", use_container_width=True):
+                with st.spinner("Extracting transformer attention weights…"):
+                    st.session_state["clip_heatmap"] = clip_heatmap(opencv_clip)
+
+            if "clip_heatmap" in st.session_state and st.session_state["clip_heatmap"] is not None:
+                st.image(st.session_state["clip_heatmap"], use_container_width=True)
+                st.caption("Warm tones mark regions with highest attention weight.")
+            else:
+                st.markdown(
+                    '<div style="background:var(--bg-panel);border:1px dashed var(--border);'
+                    'border-radius:4px;height:140px;display:flex;align-items:center;'
+                    'justify-content:center;color:var(--text-dim);font-size:11px;'
+                    'letter-spacing:0.12em">HEATMAP NOT GENERATED</div>',
+                    unsafe_allow_html=True,
+                )
+
+        with col_mods:
+            mode = st.radio(
+                "Evaluation mode",
+                ["Standard class identification", "Free-form prompting"],
+                key="clip_mode",
+                label_visibility="collapsed",
             )
             st.markdown("---")
-            
-            # ------------------------------------------------------------------
-            # SUBMODULE 1: FIXED DATASET CLASSES IDENTIFICATION
-            # ------------------------------------------------------------------
-            if modulo_seleccionado == "📊 1. Automatic Dataset Class Identification":
-                st.subheader("Standard Multi-Class Assessment")
-                st.write("CLIP will score the likelihood of core threats based on global contextual patterns.")
-                
-                prompts_fijos = [
+
+            # mode 1: standard zero-shot classification with fixed prompts for the 5 threat classes + no-threat baseline
+            if mode == "Standard class identification":
+                st.markdown('<p class="section-header">Standard 5-Class Assessment</p>',
+                            unsafe_allow_html=True)
+                st.markdown(
+                    '<div style="font-size:12px;color:var(--text-dim);margin-bottom:14px">'
+                    'CLIP scores the likelihood of each threat category and a no-threat baseline '
+                    'using zero-shot contrastive matching.</div>',
+                    unsafe_allow_html=True,
+                )
+                FIXED_PROMPTS = [
                     "An X-ray image containing scissors",
                     "An X-ray image containing a gun",
                     "An X-ray image containing a knife",
                     "An X-ray image containing pliers",
                     "An X-ray image containing a wrench",
-                    "A clean X-ray image with no threats"
+                    "A clean X-ray image with no threats",
                 ]
-                
-                if st.button("🔍 Run Fixed Analysis", use_container_width=True):
-                    with st.spinner("Processing embeddings matching..."):
-                        st.session_state.clip_fixed_results = analyze_with_clip(opencv_img_clip, prompts_fijos)
-                
-                # PERSISTENT RENDERING
-                if st.session_state.clip_fixed_results is not None:
-                    for prompt, score in st.session_state.clip_fixed_results.items():
-                        st.write(f"🔹 `{prompt}`")
-                        st.progress(score)
-                        st.caption(f"Confidence score: **{score * 100:.2f}%**")
+                if st.button("▶  Run Standard Analysis", key="clip_fixed_run",
+                             use_container_width=True):
+                    with st.spinner("Matching embeddings…"):
+                        st.session_state["clip_fixed"] = clip_classify(opencv_clip, FIXED_PROMPTS)
 
-            # ------------------------------------------------------------------
-            # SUBMODULE 2: FREE-FORM PROMPTS QUERY
-            # ------------------------------------------------------------------
+                if "clip_fixed" in st.session_state and st.session_state["clip_fixed"]:
+                    st.markdown(
+                        prob_bars_html(st.session_state["clip_fixed"]),
+                        unsafe_allow_html=True,
+                    )
+
+            # mode 2: free-form
             else:
-                st.subheader("Free-Text Interaction Console")
-                st.write("Ask open-ended queries or set custom hypothesis variables.")
-                
-                st.info(
-                    "💡 **CLIP Operation Guide:** CLIP calculates probability by contrasting options against each other. "
-                    "You must provide **at least 2 different target categories/answers** below (separated by commas) "
-                    "for the model to run and distribute scores accurately."
+                st.markdown('<p class="section-header">Free-Form Query</p>',
+                            unsafe_allow_html=True)
+                st.markdown(
+                    '<div class="scan-card" style="font-size:12px;color:var(--text-dim);padding:10px 14px;margin-bottom:12px">'
+                    '⚠ CLIP distributes probability across all candidates. '
+                    'Enter <b>at least 2</b> categories separated by commas.</div>',
+                    unsafe_allow_html=True,
                 )
-                
-                pregunta_usuario = st.text_input(
-                    "Context / Query prompt question:", 
-                    value="What elements can you identify in this x-ray image of a bag?"
+                user_opts = st.text_area(
+                    "Candidate categories (comma-separated)",
+                    value="A pair of scissors, A firearm, A knife, A wrench, No dangerous object",
+                    height=80,
+                    key="clip_free_opts",
                 )
-                
-                st.markdown("##### Target Prediction Answers to contrast:")
-                
-                opciones_por_defecto = "A sharp pair of scissors, A handgun weapon, A wrench tool, Normal clothing and items"
-                user_options_input = st.text_area("Hypothesis Candidate Answers:", value=opciones_por_defecto, height=80)
-                
-                lista_opciones = [opt.strip() for opt in user_options_input.split(",") if opt.strip()]
-                
-                if st.button("🚀 Evaluate Free Prompt", use_container_width=True):
-                    if len(lista_opciones) < 2:
-                        st.warning("⚠️ Action blocked. Please enter at least 2 categories separated by commas.")
+                candidates = [o.strip() for o in user_opts.split(",") if o.strip()]
+
+                if st.button("▶  Evaluate", key="clip_free_run", use_container_width=True):
+                    if len(candidates) < 2:
+                        st.warning("Enter at least 2 candidates.")
                     else:
-                        with st.spinner("CLIP processing open semantics..."):
-                            st.session_state.clip_free_results = analyze_with_clip(opencv_img_clip, lista_opciones)
-                
-                # PERSISTENT RENDERING
-                if st.session_state.clip_free_results is not None:
-                    st.markdown(f"**Evaluation results for query:** *{pregunta_usuario}*")
-                    for opcion, score in st.session_state.clip_free_results.items():
-                        st.write(f"👉 **{opcion}**")
-                        st.progress(score)
-                        st.caption(f"Match Probability: **{score * 100:.2f}%**")
-    else:
-        st.info("Configure dataset images or upload a target file to enable CLIP modules.")
+                        with st.spinner("Processing open semantics…"):
+                            st.session_state["clip_free"] = clip_classify(opencv_clip, candidates)
+
+                if "clip_free" in st.session_state and st.session_state["clip_free"]:
+                    st.markdown(
+                        prob_bars_html(st.session_state["clip_free"]),
+                        unsafe_allow_html=True,
+                    )
