@@ -49,7 +49,12 @@ html, body, .stApp { background: var(--bg) !important; color: var(--text) !impor
 * { font-family: var(--sans) !important; letter-spacing: 0.02em; font-size: 16px; }
 
 /* ── Hide Streamlit chrome ────────────────────────────────────────── */
-#MainMenu, footer, header { visibility: hidden; }
+#MainMenu, footer { visibility: hidden; }
+header { visibility: hidden; }
+[data-testid="stSidebarCollapsedControl"],
+[data-testid="stSidebarToggleButton"] { 
+    visibility: visible !important; 
+}
 
 /* ── Sidebar ──────────────────────────────────────────────────────── */
 section[data-testid="stSidebar"] {
