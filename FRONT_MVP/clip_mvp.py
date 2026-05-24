@@ -248,8 +248,9 @@ section[data-testid="stSidebar"] * { color: var(--text) !important; }
 """, unsafe_allow_html=True)
 
 #  set some constants for model loading, class names, and colors
-MODELS_DIR = "BEST_MODELS"
-OUTPUTS_DIR = "outputs"
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+MODELS_DIR = os.path.join(PROJECT_ROOT, "BEST_MODELS")
+OUTPUTS_DIR = os.path.join(PROJECT_ROOT, "outputs")
 OPENCLIP_MODEL_NAME = "ViT-B-32"
 OPENCLIP_PRETRAINED = "laion2b_s34b_b79k"
 NUM_CLASSES = 5
@@ -510,10 +511,16 @@ def retrieve_similar_crops(query_embedding: np.ndarray, top_k: int = 3):
     rows["score"] = scores[top_idx]
     return rows
 
+def resolve_metadata_crop_path(row) -> str:
+    crop_path = str(row.get("crop_path", "")).strip()
+    crop_path = crop_path.replace("\\", os.sep).replace("/", os.sep)
+    if os.path.isabs(crop_path):
+        return os.path.normpath(crop_path)
+    return os.path.normpath(os.path.join(PROJECT_ROOT, crop_path))
+
 def resolve_metadata_crop(row) -> np.ndarray | None:
     """Return an RGB crop from the crop_path stored in metadata."""
-    crop_path = str(row.get("crop_path", ""))
-    crop_abs = crop_path if os.path.isabs(crop_path) else os.path.join(os.getcwd(), crop_path)
+    crop_abs = resolve_metadata_crop_path(row)
     if os.path.exists(crop_abs):
         img = cv2.imread(crop_abs)
         return cv2.cvtColor(img, cv2.COLOR_BGR2RGB) if img is not None else None
