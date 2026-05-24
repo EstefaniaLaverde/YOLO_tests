@@ -738,7 +738,7 @@ with st.sidebar:
 # tabs
 tab_pre, tab_base, tab_clip_ret, tab_clip = st.tabs([
     "  PRETRAINED MODELS  ",
-    "  BASELINE CNN  ",
+    "  BASELINE MODEL  ",
     "  CLIP RETRIEVAL  ",
     "  CLIP ZERO-SHOT  ",
 ])
