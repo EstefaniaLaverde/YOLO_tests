@@ -2,6 +2,8 @@ import streamlit as st
 import cv2
 import numpy as np
 import os
+import pandas as pd
+import open_clip
 import random
 import torch
 import torch.nn.functional as F
@@ -247,6 +249,9 @@ section[data-testid="stSidebar"] * { color: var(--text) !important; }
 
 #  set some constants for model loading, class names, and colors
 MODELS_DIR = "BEST_MODELS"
+OUTPUTS_DIR = "outputs"
+OPENCLIP_MODEL_NAME = "ViT-B-32"
+OPENCLIP_PRETRAINED = "laion2b_s34b_b79k"
 NUM_CLASSES = 5
 CLASS_NAMES = {0: "Scissors", 1: "Gun", 2: "Knife", 3: "Pliers", 4: "Wrench"}
 CLASS_COLORS = {
@@ -412,6 +417,30 @@ def load_clip_model():
     processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
     return model, processor
 
+@st.cache_resource
+def load_openclip_retrieval_model():
+    """Load the same OpenCLIP model used to create the stored crop embeddings."""
+
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    model, _, preprocess = open_clip.create_model_and_transforms(
+        OPENCLIP_MODEL_NAME,
+        pretrained=OPENCLIP_PRETRAINED,
+        device=device,
+    )
+    model.eval()
+    return model, preprocess, device
+
+@st.cache_data
+def load_retrieval_assets():
+    """Load normalized embeddings and row-aligned metadata generated offline."""
+    emb_path = os.path.join(OUTPUTS_DIR, "embeddings.npy")
+    meta_path = os.path.join(OUTPUTS_DIR, "embeddings_metadata.csv")
+    embeddings = np.load(emb_path).astype("float32")
+    metadata = pd.read_csv(meta_path)
+    if len(metadata) != embeddings.shape[0]:
+        raise ValueError("Embeddings and metadata have different row counts.")
+    return embeddings, metadata
+
 # some inference helper functions to run the models and draw boxes on the images
 def predict_pretrained(model, img_bgr: np.ndarray):
     """Run YOLO / RT-DETR on a preprocessed BGR image. Returns annotated RGB."""
@@ -427,6 +456,81 @@ def predict_pretrained(model, img_bgr: np.ndarray):
             cv2.rectangle(canvas, (x1, y1), (x2, y2), color, 2)
             cv2.putText(canvas, label, (x1, max(y1 - 6, 14)), cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 2)
     return cv2.cvtColor(canvas, cv2.COLOR_BGR2RGB)
+
+def extract_pretrained_regions(model, detector_img_bgr: np.ndarray, crop_img_bgr: np.ndarray, min_conf: float):
+    """Run the pretrained detector and return its detected regions as BGR crops."""
+    canvas  = detector_img_bgr.copy()
+    results = model.predict(canvas, verbose=False)[0]
+    regions = []
+
+    if results.boxes is not None:
+        h, w = crop_img_bgr.shape[:2]
+        for box in results.boxes:
+            conf = float(box.conf[0].item())
+            if conf < min_conf:
+                continue
+
+            x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
+            x1 = max(0, min(x1, w - 1)); x2 = max(0, min(x2, w))
+            y1 = max(0, min(y1, h - 1)); y2 = max(0, min(y2, h))
+            if x2 <= x1 or y2 <= y1:
+                continue
+
+            cls_id = int(box.cls[0].item())
+            color = CLASS_COLORS.get(cls_id, (200, 200, 200))
+            label = f"{CLASS_NAMES.get(cls_id, str(cls_id))}  {conf:.2f}"
+            cv2.rectangle(canvas, (x1, y1), (x2, y2), color, 2)
+            cv2.putText(canvas, label, (x1, max(y1 - 6, 14)), cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 2)
+            regions.append({
+                "class_id": cls_id,
+                "class_name": CLASS_NAMES.get(cls_id, str(cls_id)),
+                "confidence": conf,
+                "box": (x1, y1, x2, y2),
+                "crop_bgr": crop_img_bgr[y1:y2, x1:x2].copy(),
+            })
+
+    return cv2.cvtColor(canvas, cv2.COLOR_BGR2RGB), regions
+
+def encode_openclip_crop(crop_bgr: np.ndarray) -> np.ndarray:
+    model, preprocess, device = load_openclip_retrieval_model()
+    crop_rgb = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2RGB)
+    pil = Image.fromarray(crop_rgb)
+    image = preprocess(pil).unsqueeze(0).to(device)
+    with torch.no_grad():
+        features = model.encode_image(image)
+        features = features / features.norm(dim=-1, keepdim=True)
+    return features.cpu().numpy()[0].astype("float32")
+
+def retrieve_similar_crops(query_embedding: np.ndarray, top_k: int = 3):
+    embeddings, metadata = load_retrieval_assets()
+    scores = embeddings @ query_embedding
+    top_idx = np.argsort(-scores)[:top_k]
+    rows = metadata.iloc[top_idx].copy()
+    rows.insert(0, "rank", np.arange(1, len(rows) + 1))
+    rows["score"] = scores[top_idx]
+    return rows
+
+def resolve_metadata_crop(row) -> np.ndarray | None:
+    """Return an RGB crop from disk, or rebuild it from source image + bbox."""
+    crop_path = str(row.get("crop_path", ""))
+    crop_abs = crop_path if os.path.isabs(crop_path) else os.path.join(os.getcwd(), crop_path)
+    if os.path.exists(crop_abs):
+        img = cv2.imread(crop_abs)
+        return cv2.cvtColor(img, cv2.COLOR_BGR2RGB) if img is not None else None
+
+    image_path = str(row.get("image_path", ""))
+    image_abs = image_path if os.path.isabs(image_path) else os.path.join(os.getcwd(), image_path)
+    img = cv2.imread(image_abs)
+    if img is None:
+        return None
+
+    x1, y1, x2, y2 = [int(row[c]) for c in ["x1", "y1", "x2", "y2"]]
+    h, w = img.shape[:2]
+    x1 = max(0, min(x1, w - 1)); x2 = max(0, min(x2, w))
+    y1 = max(0, min(y1, h - 1)); y2 = max(0, min(y2, h))
+    if x2 <= x1 or y2 <= y1:
+        return None
+    return cv2.cvtColor(img[y1:y2, x1:x2], cv2.COLOR_BGR2RGB)
 
 # predict with the custom baseline model - since it outputs a single box and class per image, we just draw that one box if the predicted class is not background (0)
 def predict_baseline(model, img_bgr: np.ndarray):
@@ -631,9 +735,10 @@ with st.sidebar:
         )
 
 # tabs
-tab_pre, tab_base, tab_clip = st.tabs([
+tab_pre, tab_base, tab_clip_ret, tab_clip = st.tabs([
     "  PRETRAINED MODELS  ",
     "  BASELINE CNN  ",
+    "  CLIP RETRIEVAL  ",
     "  CLIP ZERO-SHOT  ",
 ])
 
@@ -774,7 +879,102 @@ with tab_base:
                       </div>
                     </div>""", unsafe_allow_html=True)
 
-# tab 3 design - CLIP zero-shot classification with attention heatmap visualization
+# tab 3 design - CLIP retrieval over stored OpenCLIP crop embeddings
+with tab_clip_ret:
+    st.markdown('<p class="section-header">CLIP Retrieval — Detected Region Similarity</p>',
+                unsafe_allow_html=True)
+    st.markdown(
+        '<div class="scan-card scan-card-accent" style="font-size:12px;color:#5a7080">'
+        f'Uses detected regions from the selected pretrained model, encodes each crop with '
+        f'OpenCLIP {OPENCLIP_MODEL_NAME} / {OPENCLIP_PRETRAINED}, and retrieves the top 3 '
+        'nearest stored crop embeddings.</div>',
+        unsafe_allow_html=True,
+    )
+
+    retrieval_ready = (
+        os.path.exists(os.path.join(OUTPUTS_DIR, "embeddings.npy"))
+        and os.path.exists(os.path.join(OUTPUTS_DIR, "embeddings_metadata.csv"))
+    )
+    if not retrieval_ready:
+        st.warning("Missing retrieval assets in outputs/: embeddings.npy and embeddings_metadata.csv")
+    else:
+        st.markdown(PIPELINE_BADGE[pipeline], unsafe_allow_html=True)
+        st.caption(f"Detector: {sel_model}")
+        st.markdown("---")
+
+        src_r = render_upload_toggle("clip_ret")
+        opencv_ret = None
+
+        if "â¬†" in src_r:
+            opencv_ret = load_image_from_upload("clip_ret")
+            if opencv_ret is None:
+                st.info("Upload an image to run CLIP retrieval.")
+        else:
+            sel_img_r = render_image_navigator("clip_ret")
+            if sel_img_r:
+                opencv_ret = cv2.imread(os.path.join(TEST_IMG_DIR, sel_img_r))
+
+        if opencv_ret is not None:
+            min_conf = st.slider(
+                "Minimum detector confidence",
+                0.05, 0.95, 0.25, 0.05,
+                key="clip_ret_min_conf",
+            )
+
+            proc_ret = apply_pipeline(opencv_ret, pipeline)
+            annotated_ret, regions = extract_pretrained_regions(
+                model_pre,
+                proc_ret,
+                opencv_ret,
+                min_conf,
+            )
+
+            col_det, col_res = st.columns([1, 1.5], gap="large")
+            with col_det:
+                st.markdown('<p class="img-frame-label">Detected Regions</p>',
+                            unsafe_allow_html=True)
+                st.image(annotated_ret, use_container_width=True)
+                st.caption(f"{len(regions)} region(s) above confidence threshold.")
+
+            with col_res:
+                if not regions:
+                    st.info("No regions detected. Lower the confidence threshold or try another image.")
+                else:
+                    for region_idx, region in enumerate(regions, start=1):
+                        st.markdown(
+                            f'<p class="section-header">Region {region_idx} — '
+                            f'{region["class_name"]} {region["confidence"]:.2f}</p>',
+                            unsafe_allow_html=True,
+                        )
+
+                        query_embedding = encode_openclip_crop(region["crop_bgr"])
+                        top_rows = retrieve_similar_crops(query_embedding, top_k=3)
+
+                        q_col, r1, r2, r3 = st.columns([1, 1, 1, 1], gap="small")
+                        with q_col:
+                            st.image(cv2.cvtColor(region["crop_bgr"], cv2.COLOR_BGR2RGB),
+                                     use_container_width=True)
+                            st.caption("Query crop")
+
+                        for col, (_, row) in zip([r1, r2, r3], top_rows.iterrows()):
+                            with col:
+                                match_img = resolve_metadata_crop(row)
+                                if match_img is not None:
+                                    st.image(match_img, use_container_width=True)
+                                else:
+                                    st.markdown(
+                                        '<div style="background:var(--bg-panel);border:1px dashed var(--border);'
+                                        'border-radius:4px;height:120px;display:flex;align-items:center;'
+                                        'justify-content:center;color:var(--text-dim);font-size:11px;'
+                                        'letter-spacing:0.12em">CROP NOT FOUND</div>',
+                                        unsafe_allow_html=True,
+                                    )
+                                st.caption(
+                                    f"#{int(row['rank'])} {row['class_name']} | "
+                                    f"{row['split']} | score={row['score']:.3f}"
+                                )
+
+# tab 4 design - CLIP zero-shot classification with attention heatmap visualization
 with tab_clip:
     st.markdown('<p class="section-header">CLIP — Zero-Shot Classification & Attention</p>',
                 unsafe_allow_html=True)
