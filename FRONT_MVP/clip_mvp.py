@@ -1,3 +1,10 @@
+import subprocess
+import sys
+
+subprocess.run([
+    sys.executable, "-m", "pip", "uninstall", "opencv-python", "-y"
+], capture_output=True)
+
 import streamlit as st
 import cv2
 import numpy as np
