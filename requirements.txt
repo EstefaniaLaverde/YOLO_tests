@@ -1,5 +1,5 @@
 streamlit==1.57.0
-opencv-python
+opencv-python-headless
 numpy==2.4.4
 pandas==3.0.0
 open_clip_torch==3.3.0
