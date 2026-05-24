@@ -285,8 +285,8 @@ def infer_pipeline(model_filename: str) -> str:
 
 # prettier badge display for the UI :)
 PIPELINE_BADGE = {
-    "P1": '<span class="badge badge-p1">Pipeline 1 — Unsharp Mask</span>',
-    "P2": '<span class="badge badge-p2">Pipeline 2 — Bilateral + Gradient</span>',
+    "P1": '<span class="badge badge-p1">Pipeline 1 — CLAHE + Unsharp Mask</span>',
+    "P2": '<span class="badge badge-p2">Pipeline 2 — CLAHE + Bilateral + Gradient</span>',
     "None": '<span class="badge badge-none">No preprocessing</span>',
 }
 
