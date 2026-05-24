@@ -2,8 +2,17 @@ import subprocess
 import sys
 
 subprocess.run([
-    sys.executable, "-m", "pip", "uninstall", "opencv-python", "-y"
+    sys.executable, "-m", "pip", "install", 
+    "--force-reinstall", "--no-deps",
+    "opencv-python-headless==4.13.0.92"
 ], capture_output=True)
+
+import importlib
+import sys
+# Limpiar cv2 del cache de módulos si ya estaba
+for key in list(sys.modules.keys()):
+    if 'cv2' in key:
+        del sys.modules[key]
 
 import streamlit as st
 import cv2
