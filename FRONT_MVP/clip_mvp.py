@@ -511,26 +511,13 @@ def retrieve_similar_crops(query_embedding: np.ndarray, top_k: int = 3):
     return rows
 
 def resolve_metadata_crop(row) -> np.ndarray | None:
-    """Return an RGB crop from disk, or rebuild it from source image + bbox."""
+    """Return an RGB crop from the crop_path stored in metadata."""
     crop_path = str(row.get("crop_path", ""))
     crop_abs = crop_path if os.path.isabs(crop_path) else os.path.join(os.getcwd(), crop_path)
     if os.path.exists(crop_abs):
         img = cv2.imread(crop_abs)
         return cv2.cvtColor(img, cv2.COLOR_BGR2RGB) if img is not None else None
-
-    image_path = str(row.get("image_path", ""))
-    image_abs = image_path if os.path.isabs(image_path) else os.path.join(os.getcwd(), image_path)
-    img = cv2.imread(image_abs)
-    if img is None:
-        return None
-
-    x1, y1, x2, y2 = [int(row[c]) for c in ["x1", "y1", "x2", "y2"]]
-    h, w = img.shape[:2]
-    x1 = max(0, min(x1, w - 1)); x2 = max(0, min(x2, w))
-    y1 = max(0, min(y1, h - 1)); y2 = max(0, min(y2, h))
-    if x2 <= x1 or y2 <= y1:
-        return None
-    return cv2.cvtColor(img[y1:y2, x1:x2], cv2.COLOR_BGR2RGB)
+    return None
 
 # predict with the custom baseline model - since it outputs a single box and class per image, we just draw that one box if the predicted class is not background (0)
 def predict_baseline(model, img_bgr: np.ndarray):
