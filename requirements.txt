@@ -1,12 +1,17 @@
 streamlit==1.57.0
-opencv-python-headless
+opencv-python-headless==4.13.0.92
 numpy==2.4.4
 pandas==3.0.0
 open_clip_torch==3.3.0
 torch==2.11.0
 pillow==12.1.0
 transformers==5.8.0
-ultralytics==8.4.51
+ultralytics==8.4.51 --no-deps
 kagglehub==1.0.1
 torchvision==0.26.0
-opencv-python-headless>=4.0.0
+scipy
+matplotlib
+tqdm
+psutil
+PyYAML
+requests
