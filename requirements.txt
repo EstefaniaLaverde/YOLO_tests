@@ -1,0 +1,11 @@
+streamlit
+opencv-python-headless
+numpy
+pandas
+open-clip-torch
+torch
+Pillow
+transformers
+ultralytics
+kagglehub
+torchvision
