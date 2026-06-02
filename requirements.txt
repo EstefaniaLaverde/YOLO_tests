@@ -9,4 +9,3 @@ transformers==5.8.0
 ultralytics==8.4.51
 kagglehub==1.0.1
 torchvision==0.26.0
-kaggle-sdk
