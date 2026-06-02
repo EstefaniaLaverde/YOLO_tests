@@ -294,7 +294,7 @@ PIPELINE_BADGE = {
 @st.cache_resource
 def load_dataset_paths():
     try:
-        base = kagglehub.dataset_load("orvile/x-ray-baggage-anomaly-detection")
+        base = kagglehub.dataset_download("orvile/x-ray-baggage-anomaly-detection")
         return (
             os.path.join(base, "test", "images"),
             os.path.join(base, "test", "labels"),
