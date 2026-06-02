@@ -291,7 +291,7 @@ PIPELINE_BADGE = {
 }
 
 # load dataset paths to cache to avoid repeated downloads
-@st.cache_resource
+#@st.cache_resource
 def load_dataset_paths():
     import requests
     import zipfile
