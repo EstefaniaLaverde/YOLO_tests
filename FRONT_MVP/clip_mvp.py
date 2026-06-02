@@ -294,26 +294,38 @@ PIPELINE_BADGE = {
 @st.cache_resource
 def load_dataset_paths():
     try:
-        # Definimos una ruta local dentro del contenedor de Streamlit
         base_dir = os.path.join(PROJECT_ROOT, "kaggle_dataset")
+        
+        # 1. Forzar credenciales y descarga si no existe la carpeta base
+        os.environ["KAGGLE_USERNAME"] = "761d6618a8b8aa43dcf28ee446fc8c1b"
+        os.environ["KAGGLE_KEY"] = "KGAT_761d6618a8b8aa43dcf28ee446fc8c1b"
+        
+        if not os.path.exists(base_dir) or len(os.listdir(base_dir)) == 0:
+            with st.spinner("Downloading and extracting X-Ray dataset from Kaggle..."):
+                os.makedirs(base_dir, exist_ok=True)
+                os.system(f"kaggle datasets download -d orvile/x-ray-baggage-anomaly-detection -p {base_dir} --unzip")
+        
+        # 🔍 DIAGNÓSTICO: Ver qué carpetas creó Kaggle realmente
+        # Esto imprimirá la estructura en tu app para saber dónde están los archivos
+        todo_lo_extraido = os.listdir(base_dir)
+        st.sidebar.info(f"Contenido extraído: {todo_lo_extraido}")
+        
+        # 2. Intentar buscar la ruta correcta dinámicamente
+        # Si los archivos están en 'kaggle_dataset/test/images'
         images_path = os.path.join(base_dir, "test", "images")
         labels_path = os.path.join(base_dir, "test", "labels")
         
-        # Si ya existe, no lo vuelve a descargar
-        if os.path.exists(images_path):
-            return images_path, labels_path
-            
-        with st.spinner("Downloading and extracting X-Ray dataset from Kaggle..."):
-            os.makedirs(base_dir, exist_ok=True)
-            
-            # 💡 INYECTAMOS LAS CREDENCIALES DIRECTAMENTE AQUÍ:
-            os.environ["KAGGLE_USERNAME"] = "761d6618a8b8aa43dcf28ee446fc8c1b"
-            os.environ["KAGGLE_KEY"] = "KGAT_761d6618a8b8aa43dcf28ee446fc8c1b"
-            
-            # Ejecutamos la descarga nativa hacia la carpeta local
-            os.system(f"kaggle datasets download -d orvile/x-ray-baggage-anomaly-detection -p {base_dir} --unzip")
-            
+        # Si no existen ahí, probamos si el zip venía dentro de otra subcarpeta interna
+        # (A veces los datasets de Kaggle se extraen dentro de una carpeta con el mismo nombre del dataset)
+        if not os.path.exists(images_path):
+            subcarpeta_posible = os.path.join(base_dir, "x-ray-baggage-anomaly-detection")
+            if os.path.exists(subcarpeta_posible):
+                images_path = os.path.join(subcarpeta_posible, "test", "images")
+                labels_path = os.path.join(subcarpeta_posible, "test", "labels")
+        
+        # Retornamos lo que encontremos
         return images_path, labels_path
+        
     except Exception as e:
         st.error(f"Dataset load error: {e}")
         return None, None
