@@ -12,7 +12,7 @@ import torch.nn.functional as F
 from PIL import Image
 from transformers import CLIPProcessor, CLIPModel, CLIPConfig
 from ultralytics import YOLO, RTDETR
-import kagglehub
+#import kagglehub
 import torchvision.models as models
 import torchvision.transforms as T
 
@@ -294,11 +294,27 @@ PIPELINE_BADGE = {
 @st.cache_resource
 def load_dataset_paths():
     try:
-        base = kagglehub.dataset_download("orvile/x-ray-baggage-anomaly-detection")
-        return (
-            os.path.join(base, "test", "images"),
-            os.path.join(base, "test", "labels"),
-        )
+        # Definimos una ruta local dentro del contenedor de Streamlit
+        base_dir = os.path.join(PROJECT_ROOT, "kaggle_dataset")
+        images_path = os.path.join(base_dir, "test", "images")
+        labels_path = os.path.join(base_dir, "test", "labels")
+        
+        # Si ya existe, no lo vuelve a descargar
+        if os.path.exists(images_path):
+            return images_path, labels_path
+            
+        with st.spinner("Downloading and extracting X-Ray dataset from Kaggle..."):
+            os.makedirs(base_dir, exist_ok=True)
+            
+            # Configuramos las credenciales desde los secrets de Streamlit
+            os.environ["KAGGLE_USERNAME"] = st.secrets["KAGGLE_USERNAME"]
+            os.environ["KAGGLE_KEY"] = st.secrets["KAGGLE_KEY"]
+            
+            # Usamos curl o wget directo a la API de Kaggle, o la herramienta nativa por comandos
+            # Una alternativa ultraligera si tienes 'kaggle' en requirements es:
+            os.system(f"kaggle datasets download -d orvile/x-ray-baggage-anomaly-detection -p {base_dir} --unzip")
+            
+        return images_path, labels_path
     except Exception as e:
         st.error(f"Dataset load error: {e}")
         return None, None
