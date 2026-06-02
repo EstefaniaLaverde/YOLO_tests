@@ -293,42 +293,41 @@ PIPELINE_BADGE = {
 # load dataset paths to cache to avoid repeated downloads
 @st.cache_resource
 def load_dataset_paths():
-    try:
-        base_dir = os.path.join(PROJECT_ROOT, "kaggle_dataset")
-        
-        # 1. Forzar credenciales y descarga si no existe la carpeta base
-        os.environ["KAGGLE_USERNAME"] = "761d6618a8b8aa43dcf28ee446fc8c1b"
-        os.environ["KAGGLE_KEY"] = "KGAT_761d6618a8b8aa43dcf28ee446fc8c1b"
-        
-        if not os.path.exists(base_dir) or len(os.listdir(base_dir)) == 0:
-            with st.spinner("Downloading and extracting X-Ray dataset from Kaggle..."):
-                os.makedirs(base_dir, exist_ok=True)
-                os.system(f"kaggle datasets download -d orvile/x-ray-baggage-anomaly-detection -p {base_dir} --unzip")
-        
-        # 🔍 DIAGNÓSTICO: Ver qué carpetas creó Kaggle realmente
-        # Esto imprimirá la estructura en tu app para saber dónde están los archivos
-        todo_lo_extraido = os.listdir(base_dir)
-        st.sidebar.info(f"Contenido extraído: {todo_lo_extraido}")
-        
-        # 2. Intentar buscar la ruta correcta dinámicamente
-        # Si los archivos están en 'kaggle_dataset/test/images'
-        images_path = os.path.join(base_dir, "test", "images")
-        labels_path = os.path.join(base_dir, "test", "labels")
-        
-        # Si no existen ahí, probamos si el zip venía dentro de otra subcarpeta interna
-        # (A veces los datasets de Kaggle se extraen dentro de una carpeta con el mismo nombre del dataset)
-        if not os.path.exists(images_path):
-            subcarpeta_posible = os.path.join(base_dir, "x-ray-baggage-anomaly-detection")
-            if os.path.exists(subcarpeta_posible):
-                images_path = os.path.join(subcarpeta_posible, "test", "images")
-                labels_path = os.path.join(subcarpeta_posible, "test", "labels")
-        
-        # Retornamos lo que encontremos
-        return images_path, labels_path
-        
-    except Exception as e:
-        st.error(f"Dataset load error: {e}")
-        return None, None
+    base_dir = os.path.join(PROJECT_ROOT, "kaggle_dataset")
+    
+    # Forzar credenciales
+    os.environ["KAGGLE_USERNAME"] = "761d6618a8b8aa43dcf28ee446fc8c1b"
+    os.environ["KAGGLE_KEY"] = "KGAT_761d6618a8b8aa43dcf28ee446fc8c1b"
+    
+    # 1. Si la carpeta no existe, la creamos y descargamos
+    if not os.path.exists(base_dir):
+        os.makedirs(base_dir, exist_ok=True)
+        with st.spinner("Descargando dataset desde la API de Kaggle..."):
+            os.system(f"kaggle datasets download -d orvile/x-ray-baggage-anomaly-detection -p {base_dir} --unzip")
+            
+    # 2. Si la carpeta está vacía (falló el unzip o la descarga), intentamos descargar de nuevo
+    if len(os.listdir(base_dir)) == 0:
+        with st.spinner("La carpeta estaba vacía. Reintentando descarga..."):
+            os.system(f"kaggle datasets download -d orvile/x-ray-baggage-anomaly-detection -p {base_dir} --unzip")
+
+    # 3. Mostrar el contenido real en la app de forma obligatoria
+    st.write("### 📂 Diagnóstico de archivos en el servidor:")
+    st.write(f"Ruta de la carpeta: `{base_dir}`")
+    st.write(f"Archivos encontrados en la raíz: {os.listdir(base_dir)}")
+
+    # 4. Mapeo de rutas
+    images_path = os.path.join(base_dir, "test", "images")
+    labels_path = os.path.join(base_dir, "test", "labels")
+    
+    # Si no están en la raíz, buscamos si se creó una subcarpeta interna
+    if not os.path.exists(images_path):
+        for elemento in os.listdir(base_dir):
+            ruta_interna = os.path.join(base_dir, elemento)
+            if os.path.isdir(ruta_interna) and "x-ray" in elemento.lower():
+                images_path = os.path.join(ruta_interna, "test", "images")
+                labels_path = os.path.join(ruta_interna, "test", "labels")
+
+    return images_path, labels_path
 
 TEST_IMG_DIR, TEST_LBL_DIR = load_dataset_paths()
 
