@@ -293,33 +293,39 @@ PIPELINE_BADGE = {
 # load dataset paths to cache to avoid repeated downloads
 @st.cache_resource
 def load_dataset_paths():
+    import requests
+    import zipfile
+    import io
+
     base_dir = os.path.join(PROJECT_ROOT, "kaggle_dataset")
-    
-    # Forzar credenciales
-    os.environ["KAGGLE_USERNAME"] = "761d6618a8b8aa43dcf28ee446fc8c1b"
-    os.environ["KAGGLE_KEY"] = "KGAT_761d6618a8b8aa43dcf28ee446fc8c1b"
-    
-    # 1. Si la carpeta no existe, la creamos y descargamos
-    if not os.path.exists(base_dir):
-        os.makedirs(base_dir, exist_ok=True)
-        with st.spinner("Descargando dataset desde la API de Kaggle..."):
-            os.system(f"kaggle datasets download -d orvile/x-ray-baggage-anomaly-detection -p {base_dir} --unzip")
-            
-    # 2. Si la carpeta está vacía (falló el unzip o la descarga), intentamos descargar de nuevo
-    if len(os.listdir(base_dir)) == 0:
-        with st.spinner("La carpeta estaba vacía. Reintentando descarga..."):
-            os.system(f"kaggle datasets download -d orvile/x-ray-baggage-anomaly-detection -p {base_dir} --unzip")
-
-    # 3. Mostrar el contenido real en la app de forma obligatoria
-    st.write("### 📂 Diagnóstico de archivos en el servidor:")
-    st.write(f"Ruta de la carpeta: `{base_dir}`")
-    st.write(f"Archivos encontrados en la raíz: {os.listdir(base_dir)}")
-
-    # 4. Mapeo de rutas
     images_path = os.path.join(base_dir, "test", "images")
     labels_path = os.path.join(base_dir, "test", "labels")
     
-    # Si no están en la raíz, buscamos si se creó una subcarpeta interna
+    # Si las imágenes ya existen en el servidor, saltamos la descarga
+    if os.path.exists(images_path) and len(os.listdir(images_path)) > 0:
+        return images_path, labels_path
+
+    # Credenciales empaquetadas en tu token para la API básica de Kaggle
+    username = "761d6618a8b8aa43dcf28ee446fc8c1b"
+    token = "KGAT_761d6618a8b8aa43dcf28ee446fc8c1b"
+    
+    url = "https://www.kaggle.com/api/v1/datasets/download/orvile/x-ray-baggage-anomaly-detection"
+    
+    os.makedirs(base_dir, exist_ok=True)
+    
+    with st.spinner("Descargando y extrayendo X-Ray dataset directamente desde la API..."):
+        # Realizamos la petición HTTP con autenticación básica usando tus credenciales
+        response = requests.get(url, auth=(username, token), stream=True)
+        
+        if response.status_code == 200:
+            # Leemos el contenido descargado directamente como un archivo ZIP en memoria
+            with zipfile.ZipFile(io.BytesIO(response.content)) as zip_ref:
+                zip_ref.extractall(base_dir)
+        else:
+            st.error(f"Error en la descarga de Kaggle. Código de estado HTTP: {response.status_code}")
+            return None, None
+
+    # Ajuste dinámico de ruta si el zip venía con una carpeta interna contenedora
     if not os.path.exists(images_path):
         for elemento in os.listdir(base_dir):
             ruta_interna = os.path.join(base_dir, elemento)
