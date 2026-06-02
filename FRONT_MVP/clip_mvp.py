@@ -306,12 +306,11 @@ def load_dataset_paths():
         with st.spinner("Downloading and extracting X-Ray dataset from Kaggle..."):
             os.makedirs(base_dir, exist_ok=True)
             
-            # Configuramos las credenciales desde los secrets de Streamlit
-            os.environ["KAGGLE_USERNAME"] = st.secrets["KAGGLE_USERNAME"]
-            os.environ["KAGGLE_KEY"] = st.secrets["KAGGLE_KEY"]
+            # 💡 INYECTAMOS LAS CREDENCIALES DIRECTAMENTE AQUÍ:
+            os.environ["KAGGLE_USERNAME"] = "761d6618a8b8aa43dcf28ee446fc8c1b"
+            os.environ["KAGGLE_KEY"] = "KGAT_761d6618a8b8aa43dcf28ee446fc8c1b"
             
-            # Usamos curl o wget directo a la API de Kaggle, o la herramienta nativa por comandos
-            # Una alternativa ultraligera si tienes 'kaggle' en requirements es:
+            # Ejecutamos la descarga nativa hacia la carpeta local
             os.system(f"kaggle datasets download -d orvile/x-ray-baggage-anomaly-detection -p {base_dir} --unzip")
             
         return images_path, labels_path
